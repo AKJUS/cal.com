@@ -1,5 +1,10 @@
+import { Prisma as PrismaClientType } from "@prisma/client";
+
+import dayjs from "@calcom/dayjs";
 import { parseRecurringEvent, parseEventTypeColor } from "@calcom/lib";
 import getAllUserBookings from "@calcom/lib/bookings/getAllUserBookings";
+import logger from "@calcom/lib/logger";
+import { safeStringify } from "@calcom/lib/safeStringify";
 import type { PrismaClient } from "@calcom/prisma";
 import { bookingMinimalSelect } from "@calcom/prisma";
 import type { Prisma } from "@calcom/prisma/client";
@@ -16,6 +21,8 @@ type GetOptions = {
   };
   input: TGetInputSchema;
 };
+
+const log = logger.getSubLogger({ prefix: ["bookings.get"] });
 
 export const getHandler = async ({ ctx, input }: GetOptions) => {
   // using offset actually because cursor pagination requires a unique column
@@ -78,21 +85,13 @@ export async function getBookings({
           OR: [
             {
               eventType: {
-                team: {
-                  id: {
-                    in: filters.teamIds,
-                  },
-                },
+                teamId: { in: filters.teamIds },
               },
             },
             {
               eventType: {
                 parent: {
-                  team: {
-                    id: {
-                      in: filters.teamIds,
-                    },
-                  },
+                  teamId: { in: filters.teamIds },
                 },
               },
             },
@@ -114,6 +113,7 @@ export async function getBookings({
                     userId: {
                       in: filters.userIds,
                     },
+                    isFixed: true,
                   },
                 },
               },
@@ -188,7 +188,7 @@ export async function getBookings({
   if (filters?.afterStartDate) {
     bookingWhereInputFilters.afterStartDate = {
       startTime: {
-        gte: new Date(filters.afterStartDate),
+        gte: dayjs.utc(filters.afterStartDate).toDate(),
       },
     };
   }
@@ -196,7 +196,23 @@ export async function getBookings({
   if (filters?.beforeEndDate) {
     bookingWhereInputFilters.beforeEndDate = {
       endTime: {
-        lte: new Date(filters.beforeEndDate),
+        lte: dayjs.utc(filters.beforeEndDate).toDate(),
+      },
+    };
+  }
+
+  if (filters?.afterUpdatedDate) {
+    bookingWhereInputFilters.afterUpdatedDate = {
+      updatedAt: {
+        gte: dayjs.utc(filters.afterUpdatedDate).toDate(),
+      },
+    };
+  }
+
+  if (filters?.beforeUpdatedDate) {
+    bookingWhereInputFilters.beforeUpdatedDate = {
+      updatedAt: {
+        lte: dayjs.utc(filters.beforeUpdatedDate).toDate(),
       },
     };
   }
@@ -207,15 +223,27 @@ export async function getBookings({
         .map((key) => bookingWhereInputFilters[key])
         // On prisma 5.4.2 passing undefined to where "AND" causes an error
         .filter(Boolean);
+
   const bookingSelect = {
     ...bookingMinimalSelect,
     uid: true,
+    responses: true,
+    /**
+     * Who uses it -
+     * 1. We need to be able to decide which booking can have a 'Reroute' action
+     */
+    routedFromRoutingFormReponse: {
+      select: {
+        id: true,
+      },
+    },
     recurringEventId: true,
     location: true,
     eventType: {
       select: {
         slug: true,
         id: true,
+        title: true,
         eventName: true,
         price: true,
         recurringEvent: true,
@@ -224,11 +252,14 @@ export async function getBookings({
         seatsShowAttendees: true,
         seatsShowAvailabilityCount: true,
         eventTypeColor: true,
+        allowReschedulingPastBookings: true,
         schedulingType: true,
+        length: true,
         team: {
           select: {
             id: true,
             name: true,
+            slug: true,
           },
         },
       },
@@ -268,6 +299,30 @@ export async function getBookings({
         },
       },
     },
+    assignmentReason: {
+      orderBy: { createdAt: PrismaClientType.SortOrder.desc },
+      take: 1,
+    },
+  };
+
+  const membershipIdsWhereUserIsAdminOwner = (
+    await prisma.membership.findMany({
+      where: {
+        userId: user.id,
+        role: {
+          in: ["ADMIN", "OWNER"],
+        },
+      },
+      select: {
+        id: true,
+      },
+    })
+  ).map((membership) => membership.id);
+
+  const membershipConditionWhereUserIsAdminOwner = {
+    some: {
+      id: { in: membershipIdsWhereUserIsAdminOwner },
+    },
   };
 
   const [
@@ -276,6 +331,8 @@ export async function getBookings({
     bookingsQueryUserId,
     bookingsQueryAttendees,
     bookingsQueryTeamMember,
+    bookingsQueryManagedEvents,
+    bookingsQueryOrganizationMembers,
     bookingsQuerySeatReference,
     //////////////////////////
 
@@ -319,12 +376,42 @@ export async function getBookings({
           {
             eventType: {
               team: {
-                members: {
-                  some: {
-                    userId: user.id,
-                    role: {
-                      in: ["ADMIN", "OWNER"],
-                    },
+                members: membershipConditionWhereUserIsAdminOwner,
+              },
+            },
+          },
+        ],
+        AND: [passedBookingsStatusFilter, ...filtersCombined],
+      },
+      orderBy,
+      take: take + 1,
+      skip,
+    }),
+    prisma.booking.findMany({
+      where: {
+        eventType: {
+          parent: {
+            team: {
+              members: membershipConditionWhereUserIsAdminOwner,
+            },
+          },
+        },
+        AND: [passedBookingsStatusFilter, ...filtersCombined],
+      },
+      orderBy,
+      take: take + 1,
+      skip,
+    }),
+    prisma.booking.findMany({
+      where: {
+        OR: [
+          {
+            user: {
+              teams: {
+                some: {
+                  team: {
+                    isOrganization: true,
+                    members: membershipConditionWhereUserIsAdminOwner,
                   },
                 },
               },
@@ -421,18 +508,33 @@ export async function getBookings({
     bookingsQueryUserId
       .concat(bookingsQueryAttendees)
       .concat(bookingsQueryTeamMember)
+      .concat(bookingsQueryManagedEvents)
+      .concat(bookingsQueryOrganizationMembers)
       .concat(bookingsQuerySeatReference)
   );
 
   // Now enrich bookings with relation data. We could have queried the relation data along with the bookings, but that would cause unnecessary queries to the database.
   // Because Prisma is also going to query the select relation data sequentially, we are fine querying it separately here as it would be just 1 query instead of 4
 
+  log.info(
+    `fetching all bookings for ${user.id}`,
+    safeStringify({
+      ids: plainBookings.map((booking) => booking.id),
+      orderBy,
+      filtersCombined,
+      take,
+      skip,
+    })
+  );
+
   const bookings = await Promise.all(
     (
       await prisma.booking.findMany({
         where: {
           id: {
-            in: plainBookings.map((booking) => booking.id),
+            in: plainBookings
+              .sort((a, b) => a.startTime.getTime() - b.startTime.getTime())
+              .map((booking) => booking.id),
           },
         },
         select: bookingSelect,

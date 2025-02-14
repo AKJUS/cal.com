@@ -11,6 +11,13 @@ type TaskPayloads = {
   triggerGuestNoShowWebhook: z.infer<
     typeof import("./tasks/triggerNoShow/schema").ZSendNoShowWebhookPayloadSchema
   >;
+  triggerFormSubmittedNoEventWebhook: z.infer<
+    typeof import("./tasks/triggerFormSubmittedNoEvent/triggerFormSubmittedNoEventWebhook").ZTriggerFormSubmittedNoEventWebhookPayloadSchema
+  >;
+  translateEventTypeData: z.infer<
+    typeof import("./tasks/translateEventTypeData").ZTranslateEventDataPayloadSchema
+  >;
+  createCRMEvent: z.infer<typeof import("./tasks/crm/schema").createCRMEventSchema>;
 };
 export type TaskTypes = keyof TaskPayloads;
 export type TaskHandler = (payload: string) => Promise<void>;

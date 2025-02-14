@@ -30,6 +30,7 @@ export const getEventTypesFromDB = async (id: number) => {
       eventName: true,
       recurringEvent: true,
       requiresConfirmation: true,
+      canSendCalVideoTranscriptionEmails: true,
       userId: true,
       successRedirectUrl: true,
       customInputs: true,
@@ -37,6 +38,7 @@ export const getEventTypesFromDB = async (id: number) => {
       price: true,
       currency: true,
       bookingFields: true,
+      allowReschedulingPastBookings: true,
       disableGuests: true,
       timeZone: true,
       profile: {
@@ -60,6 +62,7 @@ export const getEventTypesFromDB = async (id: number) => {
       },
       team: {
         select: {
+          id: true,
           slug: true,
           name: true,
           hideBranding: true,
@@ -79,6 +82,11 @@ export const getEventTypesFromDB = async (id: number) => {
       schedulingType: true,
       periodStartDate: true,
       periodEndDate: true,
+      parent: {
+        select: {
+          teamId: true,
+        },
+      },
     },
   });
 
@@ -168,7 +176,8 @@ export const handleSeatsEventTypeOnBooking = async (
     if (seatAttendee) {
       const attendee = bookingInfo?.attendees?.find((a) => {
         return (
-          a.email === seatAttendee?.attendee?.email || a.phoneNumber === seatAttendee?.attendee?.phoneNumber
+          a.email === seatAttendee?.attendee?.email ||
+          (a.phoneNumber && a.phoneNumber === seatAttendee?.attendee?.phoneNumber)
         );
       });
       bookingInfo["attendees"] = attendee ? [attendee] : [];

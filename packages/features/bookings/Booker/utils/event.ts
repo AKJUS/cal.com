@@ -1,11 +1,10 @@
-import { usePathname } from "next/navigation";
 import { shallow } from "zustand/shallow";
 
 import { useSchedule } from "@calcom/features/schedules";
 import { useCompatSearchParams } from "@calcom/lib/hooks/useCompatSearchParams";
 import { trpc } from "@calcom/trpc/react";
 
-import { useTimePreferences } from "../../lib/timePreferences";
+import { useBookerTime } from "../components/hooks/useBookerTime";
 import { useBookerStore } from "../store";
 
 export type useEventReturnType = ReturnType<typeof useEvent>;
@@ -72,6 +71,7 @@ export const useScheduleForEvent = ({
   orgSlug,
   teamMemberEmail,
   fromRedirectOfNonOrgLink,
+  isTeamEvent,
 }: {
   prefetchNextMonth?: boolean;
   username?: string | null;
@@ -85,9 +85,9 @@ export const useScheduleForEvent = ({
   orgSlug?: string;
   teamMemberEmail?: string | null;
   fromRedirectOfNonOrgLink?: boolean;
+  isTeamEvent?: boolean;
 } = {}) => {
-  const { timezone } = useTimePreferences();
-  const event = useEvent({ fromRedirectOfNonOrgLink });
+  const { timezone } = useBookerTime();
   const [usernameFromStore, eventSlugFromStore, monthFromStore, durationFromStore] = useBookerStore(
     (state) => [state.username, state.eventSlug, state.month, state.selectedDuration],
     shallow
@@ -96,14 +96,10 @@ export const useScheduleForEvent = ({
   const searchParams = useCompatSearchParams();
   const rescheduleUid = searchParams?.get("rescheduleUid");
 
-  const pathname = usePathname();
-
-  const isTeam = !!event.data?.team?.parentId;
-
   const schedule = useSchedule({
     username: usernameFromStore ?? username,
     eventSlug: eventSlugFromStore ?? eventSlug,
-    eventId: event.data?.id ?? eventId,
+    eventId,
     timezone,
     selectedDate,
     prefetchNextMonth,
@@ -112,7 +108,7 @@ export const useScheduleForEvent = ({
     rescheduleUid,
     month: monthFromStore ?? month,
     duration: durationFromStore ?? duration,
-    isTeamEvent: pathname?.indexOf("/team/") !== -1 || isTeam,
+    isTeamEvent,
     orgSlug,
     teamMemberEmail,
   });

@@ -3,34 +3,32 @@
 import { useAutoAnimate } from "@formkit/auto-animate/react";
 import { Trans } from "next-i18next";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { FC } from "react";
 import { memo, useEffect, useState } from "react";
 import { z } from "zod";
 
 import { useOrgBranding } from "@calcom/features/ee/organizations/context/provider";
-import useIntercom from "@calcom/features/ee/support/lib/intercom/useIntercom";
 import { EventTypeEmbedButton, EventTypeEmbedDialog } from "@calcom/features/embed/EventTypeEmbed";
 import { EventTypeDescription } from "@calcom/features/eventtypes/components";
 import CreateEventTypeDialog from "@calcom/features/eventtypes/components/CreateEventTypeDialog";
 import { DuplicateDialog } from "@calcom/features/eventtypes/components/DuplicateDialog";
 import { InfiniteSkeletonLoader } from "@calcom/features/eventtypes/components/SkeletonLoader";
 import { getTeamsFiltersFromQuery } from "@calcom/features/filters/lib/getTeamsFiltersFromQuery";
-import Shell from "@calcom/features/shell/Shell";
-import { parseEventTypeColor } from "@calcom/lib";
-import { APP_NAME } from "@calcom/lib/constants";
-import { useCompatSearchParams } from "@calcom/lib/hooks/useCompatSearchParams";
+import { classNames, parseEventTypeColor } from "@calcom/lib";
+import { APP_NAME, WEBSITE_URL } from "@calcom/lib/constants";
+import { useCopy } from "@calcom/lib/hooks/useCopy";
+import { useDebounce } from "@calcom/lib/hooks/useDebounce";
+import { useInViewObserver } from "@calcom/lib/hooks/useInViewObserver";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { useRouterQuery } from "@calcom/lib/hooks/useRouterQuery";
 import { useGetTheme } from "@calcom/lib/hooks/useTheme";
 import { useTypedQuery } from "@calcom/lib/hooks/useTypedQuery";
 import { HttpError } from "@calcom/lib/http-error";
-import type { User } from "@calcom/prisma/client";
 import type { MembershipRole } from "@calcom/prisma/enums";
 import { SchedulingType } from "@calcom/prisma/enums";
 import type { RouterOutputs } from "@calcom/trpc/react";
 import { trpc, TRPCClientError } from "@calcom/trpc/react";
-import type { UserProfile } from "@calcom/types/UserProfile";
 import {
   Alert,
   Badge,
@@ -47,19 +45,18 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
   EmptyScreen,
-  HeadSeo,
   HorizontalTabs,
+  Icon,
   Label,
   showToast,
   Skeleton,
   Switch,
+  TextField,
   Tooltip,
   ArrowButton,
   UserAvatarGroup,
 } from "@calcom/ui";
 
-import type { AppProps } from "@lib/app-providers";
-import { useInViewObserver } from "@lib/hooks/useInViewObserver";
 import useMeQuery from "@lib/hooks/useMeQuery";
 
 type GetUserEventGroupsResponse = RouterOutputs["viewer"]["eventTypes"]["getUserEventGroups"];
@@ -73,22 +70,16 @@ type EventTypeGroups = RouterOutputs["viewer"]["eventTypes"]["getByViewer"]["eve
 type EventTypeGroup = EventTypeGroups[number];
 type EventType = EventTypeGroup["eventTypes"][number];
 
-type DeNormalizedEventType = Omit<EventType, "userIds"> & {
-  users: (Pick<User, "id" | "name" | "username" | "avatarUrl"> & {
-    nonProfileUsername: string | null;
-    profile: UserProfile;
-  })[];
-};
-
 const LIMIT = 10;
 
 interface InfiniteEventTypeListProps {
   group: InfiniteEventTypeGroup;
   readOnly: boolean;
   bookerUrl: string | null;
-  pages: { nextCursor: number | undefined; eventTypes: InfiniteEventType[] }[] | undefined;
+  pages: { nextCursor: number | null | undefined; eventTypes: InfiniteEventType[] }[] | undefined;
   lockedByOrg?: boolean;
   isPending?: boolean;
+  debouncedSearchTerm?: string;
 }
 
 interface InfiniteTeamsTabProps {
@@ -103,9 +94,13 @@ const InfiniteTeamsTab: FC<InfiniteTeamsTabProps> = (props) => {
   const { activeEventTypeGroup } = props;
   const { t } = useLocale();
 
+  const [searchTerm, setSearchTerm] = useState("");
+  const debouncedSearchTerm = useDebounce(searchTerm, 500);
+
   const query = trpc.viewer.eventTypes.getEventTypesFromGroup.useInfiniteQuery(
     {
       limit: LIMIT,
+      searchQuery: debouncedSearchTerm,
       group: { teamId: activeEventTypeGroup?.teamId, parentId: activeEventTypeGroup?.parentId },
     },
     {
@@ -124,6 +119,19 @@ const InfiniteTeamsTab: FC<InfiniteTeamsTabProps> = (props) => {
 
   return (
     <div>
+      <TextField
+        className="max-w-64 bg-subtle !border-muted mb-4 mr-auto rounded-md !pl-0 focus:!ring-offset-0"
+        addOnLeading={<Icon name="search" className="text-subtle h-4 w-4" />}
+        addOnClassname="!border-muted"
+        containerClassName="max-w-64 focus:!ring-offset-0 mb-4"
+        type="search"
+        value={searchTerm}
+        autoComplete="false"
+        onChange={(e) => {
+          setSearchTerm(e.target.value);
+        }}
+        placeholder={t("search")}
+      />
       {!!activeEventTypeGroup && (
         <InfiniteEventTypeList
           pages={query?.data?.pages}
@@ -131,6 +139,7 @@ const InfiniteTeamsTab: FC<InfiniteTeamsTabProps> = (props) => {
           bookerUrl={activeEventTypeGroup.bookerUrl}
           readOnly={activeEventTypeGroup.metadata.readOnly}
           isPending={query.isPending}
+          debouncedSearchTerm={debouncedSearchTerm}
         />
       )}
       <div className="text-default p-4 text-center" ref={buttonInView.ref}>
@@ -187,11 +196,11 @@ const Item = ({
   );
 
   return (
-    <div className="relative flex-1 overflow-hidden pr-4 text-sm">
+    <div className={classNames(eventTypeColor && "-ml-3", "relative flex-1 overflow-hidden pr-4 text-sm")}>
       {eventTypeColor && (
         <div className="absolute h-full w-0.5" style={{ backgroundColor: eventTypeColor }} />
       )}
-      <div className="ml-3">
+      <div className={classNames(eventTypeColor && "ml-3")}>
         {readOnly ? (
           <div>
             {content()}
@@ -238,11 +247,13 @@ export const InfiniteEventTypeList = ({
   bookerUrl,
   lockedByOrg,
   isPending,
+  debouncedSearchTerm,
 }: InfiniteEventTypeListProps): JSX.Element => {
   const { t } = useLocale();
   const router = useRouter();
   const pathname = usePathname();
-  const searchParams = useCompatSearchParams();
+  const searchParams = useSearchParams();
+  const { copyToClipboard } = useCopy();
   const [parent] = useAutoAnimate<HTMLUListElement>();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteDialogTypeId, setDeleteDialogTypeId] = useState(0);
@@ -265,6 +276,7 @@ export const InfiniteEventTypeList = ({
       await utils.viewer.eventTypes.getEventTypesFromGroup.cancel();
       const previousValue = utils.viewer.eventTypes.getEventTypesFromGroup.getInfiniteData({
         limit: LIMIT,
+        searchQuery: debouncedSearchTerm,
         group: { teamId: group?.teamId, parentId: group?.parentId },
       });
 
@@ -283,7 +295,11 @@ export const InfiniteEventTypeList = ({
     onError: async (err, _, context) => {
       if (context?.previousValue) {
         utils.viewer.eventTypes.getEventTypesFromGroup.setInfiniteData(
-          { limit: LIMIT, group: { teamId: group?.teamId, parentId: group?.parentId } },
+          {
+            limit: LIMIT,
+            searchQuery: debouncedSearchTerm,
+            group: { teamId: group?.teamId, parentId: group?.parentId },
+          },
           context.previousValue
         );
       }
@@ -316,16 +332,26 @@ export const InfiniteEventTypeList = ({
     await utils.viewer.eventTypes.getEventTypesFromGroup.cancel();
     const previousValue = utils.viewer.eventTypes.getEventTypesFromGroup.getInfiniteData({
       limit: LIMIT,
+      searchQuery: debouncedSearchTerm,
       group: { teamId: group?.teamId, parentId: group?.parentId },
     });
 
     if (previousValue) {
       utils.viewer.eventTypes.getEventTypesFromGroup.setInfiniteData(
-        { limit: LIMIT, group: { teamId: group?.teamId, parentId: group?.parentId } },
+        {
+          limit: LIMIT,
+          searchQuery: debouncedSearchTerm,
+          group: { teamId: group?.teamId, parentId: group?.parentId },
+        },
         (data) => {
+          if (!data) return { pages: [], pageParams: [] };
+
           return {
-            pageParams: data?.pageParams ?? [],
-            pages: newOrder,
+            ...data,
+            pages: newOrder.map((page) => ({
+              ...page,
+              nextCursor: page.nextCursor ?? undefined,
+            })),
           };
         }
       );
@@ -343,7 +369,7 @@ export const InfiniteEventTypeList = ({
 
   // inject selection data into url for correct router history
   const openDuplicateModal = (eventType: InfiniteEventType, group: InfiniteEventTypeGroup) => {
-    const newSearchParams = new URLSearchParams(searchParams ?? undefined);
+    const newSearchParams = new URLSearchParams(searchParams?.toString() ?? undefined);
     function setParamsIfDefined(key: string, value: string | number | boolean | null | undefined) {
       if (value) newSearchParams.set(key, value.toString());
       if (value === null) newSearchParams.delete(key);
@@ -367,12 +393,17 @@ export const InfiniteEventTypeList = ({
       await utils.viewer.eventTypes.getEventTypesFromGroup.cancel();
       const previousValue = utils.viewer.eventTypes.getEventTypesFromGroup.getInfiniteData({
         limit: LIMIT,
+        searchQuery: debouncedSearchTerm,
         group: { teamId: group?.teamId, parentId: group?.parentId },
       });
 
       if (previousValue) {
         await utils.viewer.eventTypes.getEventTypesFromGroup.setInfiniteData(
-          { limit: LIMIT, group: { teamId: group?.teamId, parentId: group?.parentId } },
+          {
+            limit: LIMIT,
+            searchQuery: debouncedSearchTerm,
+            group: { teamId: group?.teamId, parentId: group?.parentId },
+          },
           (data) => {
             if (!data) {
               return {
@@ -396,7 +427,11 @@ export const InfiniteEventTypeList = ({
     onError: (err, _, context) => {
       if (context?.previousValue) {
         utils.viewer.eventTypes.getEventTypesFromGroup.setInfiniteData(
-          { limit: LIMIT, group: { teamId: group?.teamId, parentId: group?.parentId } },
+          {
+            limit: LIMIT,
+            searchQuery: debouncedSearchTerm,
+            group: { teamId: group?.teamId, parentId: group?.parentId },
+          },
           context.previousValue
         );
       }
@@ -422,9 +457,9 @@ export const InfiniteEventTypeList = ({
     if (isPending) return <InfiniteSkeletonLoader />;
 
     return group.teamId ? (
-      <EmptyEventTypeList group={group} />
+      <EmptyEventTypeList group={group} searchTerm={debouncedSearchTerm} />
     ) : !group.profile.eventTypesLockedByOrg ? (
-      <CreateFirstEventTypeView slug={group.profile.slug ?? ""} />
+      <CreateFirstEventTypeView slug={group.profile.slug ?? ""} searchTerm={debouncedSearchTerm} />
     ) : (
       <></>
     );
@@ -533,7 +568,7 @@ export const InfiniteEventTypeList = ({
                                     StartIcon="link"
                                     onClick={() => {
                                       showToast(t("link_copied"), "success");
-                                      navigator.clipboard.writeText(calLink);
+                                      copyToClipboard(calLink);
                                     }}
                                   />
                                 </Tooltip>
@@ -546,7 +581,7 @@ export const InfiniteEventTypeList = ({
                                       StartIcon="venetian-mask"
                                       onClick={() => {
                                         showToast(t("private_link_copied"), "success");
-                                        navigator.clipboard.writeText(placeholderHashedLink);
+                                        copyToClipboard(placeholderHashedLink);
                                         setPrivateLinkCopyIndices((prev) => {
                                           const prevIndex = prev[type.slug] ?? 0;
                                           prev[type.slug] = (prevIndex + 1) % type.hashedLink.length;
@@ -783,13 +818,13 @@ export const InfiniteEventTypeList = ({
   );
 };
 
-const CreateFirstEventTypeView = ({ slug }: { slug: string }) => {
+const CreateFirstEventTypeView = ({ slug, searchTerm }: { slug: string; searchTerm?: string }) => {
   const { t } = useLocale();
 
   return (
     <EmptyScreen
       Icon="link"
-      headline={t("new_event_type_heading")}
+      headline={searchTerm ? t("no_result_found_for", { searchTerm }) : t("new_event_type_heading")}
       description={t("new_event_type_description")}
       className="mb-16"
       buttonRaw={
@@ -828,12 +863,18 @@ const CTA = ({
   );
 };
 
-const EmptyEventTypeList = ({ group }: { group: EventTypeGroup | InfiniteEventTypeGroup }) => {
+const EmptyEventTypeList = ({
+  group,
+  searchTerm,
+}: {
+  group: EventTypeGroup | InfiniteEventTypeGroup;
+  searchTerm?: string;
+}) => {
   const { t } = useLocale();
   return (
     <>
       <EmptyScreen
-        headline={t("team_no_event_types")}
+        headline={searchTerm ? t("no_result_found_for", { searchTerm }) : t("team_no_event_types")}
         buttonRaw={
           <Button
             href={`?dialog=new&eventPage=${group.profile.slug}&teamId=${group.teamId}`}
@@ -858,8 +899,9 @@ const InfiniteScrollMain = ({
   eventTypeGroups: GetUserEventGroupsResponse["eventTypeGroups"] | undefined;
   profiles: GetUserEventGroupsResponse["profiles"] | undefined;
 }) => {
-  const searchParams = useCompatSearchParams();
+  const searchParams = useSearchParams();
   const { data } = useTypedQuery(querySchema);
+  const orgBranding = useOrgBranding();
 
   if (status === "error") {
     return <Alert severity="error" title="Something went wrong" message={errorMessage} />;
@@ -878,14 +920,22 @@ const InfiniteScrollMain = ({
   const activeEventTypeGroup =
     eventTypeGroups.filter((item) => item.teamId === data.teamId) ?? eventTypeGroups[0];
 
+  const bookerUrl = orgBranding ? orgBranding?.fullDomain : WEBSITE_URL;
+
+  // If the event type group is the same as the org branding team, or the parent team, set the bookerUrl to the org branding URL
+  // This is to ensure that the bookerUrl is always the same as the one in the org branding settings
+  // This keeps the app working for personal event types that were not migrated to the org (rare)
+  if (
+    activeEventTypeGroup[0].teamId === orgBranding?.id ||
+    activeEventTypeGroup[0].parentId === orgBranding?.id
+  ) {
+    activeEventTypeGroup[0].bookerUrl = bookerUrl;
+  }
+
   return (
     <>
-      {eventTypeGroups.length >= 1 && (
-        <>
-          <HorizontalTabs tabs={tabs} />
-          <InfiniteTeamsTab activeEventTypeGroup={activeEventTypeGroup[0]} />
-        </>
-      )}
+      {eventTypeGroups.length > 1 && <HorizontalTabs tabs={tabs} />}
+      {eventTypeGroups.length >= 1 && <InfiniteTeamsTab activeEventTypeGroup={activeEventTypeGroup[0]} />}
       {eventTypeGroups.length === 0 && <CreateFirstEventTypeView slug={profiles[0].slug ?? ""} />}
       <EventTypeEmbedDialog />
       {searchParams?.get("dialog") === "duplicate" && <DuplicateDialog />}
@@ -893,16 +943,39 @@ const InfiniteScrollMain = ({
   );
 };
 
-const EventTypesPage: React.FC & {
-  PageWrapper?: AppProps["Component"]["PageWrapper"];
-  getLayout?: AppProps["Component"]["getLayout"];
-} = () => {
-  const { t } = useLocale();
-  const searchParams = useCompatSearchParams();
-  const { open } = useIntercom();
+export const EventTypesCTA = () => {
+  const { data: user } = useMeQuery();
+  const routerQuery = useRouterQuery();
+  const filters = getTeamsFiltersFromQuery(routerQuery);
+  const { data: getUserEventGroupsData } = trpc.viewer.eventTypes.getUserEventGroups.useQuery(
+    filters && { filters },
+    {
+      refetchOnWindowFocus: false,
+      gcTime: 1 * 60 * 60 * 1000,
+      staleTime: 1 * 60 * 60 * 1000,
+    }
+  );
+  const profileOptions =
+    getUserEventGroupsData?.profiles
+      ?.filter((profile) => !profile.readOnly)
+      ?.filter((profile) => !profile.eventTypesLockedByOrg)
+      ?.map((profile) => {
+        return {
+          teamId: profile.teamId,
+          label: profile.name || profile.slug,
+          image: profile.image,
+          membershipRole: profile.membershipRole,
+          slug: profile.slug,
+        };
+      }) ?? [];
+
+  return <CTA profileOptions={profileOptions} isOrganization={!!user?.organizationId} />;
+};
+
+const EventTypesPage: React.FC = () => {
   const { data: user } = useMeQuery();
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [showProfileBanner, setShowProfileBanner] = useState(false);
+  const [_showProfileBanner, setShowProfileBanner] = useState(false);
   const orgBranding = useOrgBranding();
   const routerQuery = useRouterQuery();
   const filters = getTeamsFiltersFromQuery(routerQuery);
@@ -920,9 +993,6 @@ const EventTypesPage: React.FC & {
   });
 
   useEffect(() => {
-    if (searchParams?.get("openIntercom") === "true") {
-      open();
-    }
     /**
      * During signup, if the account already exists, we redirect the user to /event-types instead of onboarding.
      * Adding this redirection logic here as well to ensure the user is redirected to the correct redirectUrl.
@@ -939,42 +1009,13 @@ const EventTypesPage: React.FC & {
     );
   }, [orgBranding, user]);
 
-  const profileOptions =
-    getUserEventGroupsData?.profiles
-      ?.filter((profile) => !profile.readOnly)
-      ?.filter((profile) => !profile.eventTypesLockedByOrg)
-      ?.map((profile) => {
-        return {
-          teamId: profile.teamId,
-          label: profile.name || profile.slug,
-          image: profile.image,
-          membershipRole: profile.membershipRole,
-          slug: profile.slug,
-        };
-      }) ?? [];
-
   return (
-    <Shell
-      withoutMain={false}
-      title="Event Types"
-      description="Create events to share for people to book on your calendar."
-      withoutSeo
-      heading={t("event_types_page_title")}
-      hideHeadingOnMobile
-      subtitle={t("event_types_page_subtitle")}
-      CTA={<CTA profileOptions={profileOptions} isOrganization={!!user?.organizationId} />}>
-      <HeadSeo
-        title="Event Types"
-        description="Create events to share for people to book on your calendar."
-      />
-
-      <InfiniteScrollMain
-        profiles={getUserEventGroupsData?.profiles}
-        eventTypeGroups={getUserEventGroupsData?.eventTypeGroups}
-        status={getUserEventGroupsStatus}
-        errorMessage={getUserEventGroupsStatusError?.message}
-      />
-    </Shell>
+    <InfiniteScrollMain
+      profiles={getUserEventGroupsData?.profiles}
+      eventTypeGroups={getUserEventGroupsData?.eventTypeGroups}
+      status={getUserEventGroupsStatus}
+      errorMessage={getUserEventGroupsStatusError?.message}
+    />
   );
 };
 

@@ -10,6 +10,7 @@ import { IS_TEAM_BILLING_ENABLED_CLIENT, MAX_NB_INVITES } from "@calcom/lib/cons
 import { useCompatSearchParams } from "@calcom/lib/hooks/useCompatSearchParams";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { MembershipRole } from "@calcom/prisma/enums";
+import { CreationSource } from "@calcom/prisma/enums";
 import type { RouterOutputs } from "@calcom/trpc";
 import { trpc } from "@calcom/trpc";
 import { isEmail } from "@calcom/trpc/server/routers/viewer/teams/util";
@@ -215,12 +216,13 @@ export default function MemberInvitationModal(props: MemberInvitationModalProps)
             </span>
           ) : null
         }>
-        <div className="max-h-9">
+        <div className="sm:max-h-9">
           <Label className="sr-only" htmlFor="role">
             {t("import_mode")}
           </Label>
           <ToggleGroup
             isFullWidth={true}
+            className="flex-col sm:flex-row"
             onValueChange={(val) => {
               setModalInputMode(val as ModalMode);
               newMemberFormMethods.clearErrors();
@@ -511,6 +513,7 @@ export const MemberInvitationModalWithoutMembers = ({
             language: i18n.language,
             role: values.role,
             usernameOrEmail: values.emailOrUsername,
+            creationSource: CreationSource.WEBAPP,
           },
           {
             onSuccess: async (data) => {
