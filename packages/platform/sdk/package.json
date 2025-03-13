@@ -15,13 +15,13 @@
   },
   "packageManager": "yarn@3.4.1",
   "devDependencies": {
-    "@rollup/plugin-commonjs": "^25.0.7",
+    "@rollup/plugin-commonjs": "^26.0.0",
     "@rollup/plugin-json": "^6.1.0",
     "@rollup/plugin-node-resolve": "^15.2.3",
     "@rollup/plugin-typescript": "^11.1.6",
-    "openapi-typescript": "^6.7.5",
-    "release-it": "^17.1.1",
-    "rollup": "^4.12.0",
+    "openapi-typescript": "^7.0.0",
+    "release-it": "^17.8.0",
+    "rollup": "^4.22.4",
     "rollup-plugin-bundle-size": "^1.0.3",
     "ts-essentials": "^9.4.1",
     "typescript": "^5.3.3"
