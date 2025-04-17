@@ -26,9 +26,9 @@
   "types": "./dist/index.d.ts",
   "devDependencies": {
     "typescript": "^4.9.4",
-    "vite": "^4.1.2"
+    "vite": "^4.5.13"
   },
   "dependencies": {
-    "@calcom/embed-core": "workspace:*"
+    "@calcom/embed-core": "1.0.0"
   }
 }
